@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 )
 
+// Index
 type Index struct {
-	StartKey []byte
-	EndKey   []byte
-	Offset   int64
-	Length   int64
+	StartKey []byte //最小的key
+	EndKey   []byte //最大的key
+	Offset   int64  //偏移量
+	Length   int64  //长度
 }
 
 func (i *Index) Encode() ([]byte, error) {

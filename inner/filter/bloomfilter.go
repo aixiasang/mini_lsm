@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/aixiasang/lsm/inner/myerror"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -173,7 +174,7 @@ func (bf *BloomFilter) Save() []byte {
 // Load 从字节数组加载布隆过滤器
 func (bf *BloomFilter) Load(data []byte) error {
 	if len(data) < 24 {
-		return errors.New("invalid data: too short for bloom filter metadata")
+		return myerror.ErrInvalidBloomFilter
 	}
 
 	reader := bytes.NewReader(data)
@@ -209,7 +210,7 @@ func (bf *BloomFilter) Load(data []byte) error {
 	for i := uint64(0); i < bitsLen; i++ {
 		if err := binary.Read(reader, binary.BigEndian, &bf.bits[i]); err != nil {
 			if errors.Is(err, io.EOF) && i > 0 {
-				return errors.New("unexpected end of data, bloom filter data incomplete")
+				return myerror.ErrBloomFilterIncomplete
 			}
 			return err
 		}

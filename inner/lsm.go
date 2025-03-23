@@ -2,7 +2,9 @@ package inner
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 
 	"github.com/aixiasang/lsm/inner/config"
@@ -20,40 +22,65 @@ type LsmTree struct {
 	immutableIndex []*immutable      // 不可变索引
 	compactCh      chan *immutable   // 压缩通道，用于异步传递不可变索引进行压缩
 	stopCh         chan struct{}     // 停止信号通道
-	nodes          [][]*sst.Node     // 节点
-	seq            []atomic.Uint32   // 序列号
+	nodes          [][]*sst.Node     // 节点 - array of slices of nodes for each level
+	seq            []*atomic.Uint32  // 序列号
+	levelSize      int               // 层级大小
 }
 
 func NewLsmTree(conf *config.Config) (*LsmTree, error) {
 	dbDir := conf.DataDir
 
-	db, err := os.Open(dbDir)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Join(dbDir, conf.WalDir), 0755); err != nil {
 		return nil, err
 	}
-	defer db.Close()
-
-	walId := uint32(0)
-	curWal, err := wal.NewWal(conf, walId)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Join(dbDir, conf.SSTDir), 0755); err != nil {
 		return nil, err
+	}
+
+	// Ensure LevelSize is at least 1
+	if conf.LevelSize <= 0 {
+		conf.LevelSize = 1
+	}
+
+	// Initialize levelSize from config
+	levelSize := conf.LevelSize
+
+	// Initialize nodes as an array of levelSize slices
+	nodes := make([][]*sst.Node, levelSize)
+	for i := 0; i < levelSize; i++ {
+		nodes[i] = make([]*sst.Node, 0)
+	}
+
+	// Initialize sequence numbers for each level
+	seq := make([]*atomic.Uint32, levelSize)
+	for i := 0; i < levelSize; i++ {
+		seq[i] = &atomic.Uint32{}
 	}
 
 	tree := &LsmTree{
 		conf:           conf,
 		mutableIndex:   memtable.NewMemTable(memtable.MemTableTypeBTree, 16),
-		walId:          walId,
-		curWal:         curWal,
 		immutableIndex: []*immutable{},
 		compactCh:      make(chan *immutable, 10), // 缓冲区大小为10
 		stopCh:         make(chan struct{}),
-		nodes:          make([][]*sst.Node, 0),
-		seq:            make([]atomic.Uint32, 0),
+		nodes:          nodes,
+		seq:            seq,
+		levelSize:      levelSize,
 	}
-
-	// 启动后台goroutine监听compactCh通道，执行压缩操作
 	go tree.compactWorker()
 
+	if err := tree.load(); err != nil {
+		return nil, err
+	}
+	// 启动后台goroutine监听compactCh通道，执行压缩操作
+	if tree.walId != 0 {
+		tree.walId++
+	}
+	curWal, err := wal.NewWal(conf, tree.walId)
+	if err != nil {
+		return nil, err
+	}
+	tree.curWal = curWal
 	return tree, nil
 }
 
@@ -67,7 +94,7 @@ func (t *LsmTree) compactWorker() {
 				// 错误处理，实际应用中可能需要记录日志
 				// 这里简单地将错误打印出来
 				// 实际应用可能需要更复杂的错误处理机制
-				// log.Printf("Compact error: %v", err)
+				log.Printf("Compact error: %v", err)
 			}
 		case <-t.stopCh:
 			// 收到停止信号，结束goroutine
@@ -164,19 +191,25 @@ func (t *LsmTree) Get(key []byte) ([]byte, error) {
 			return nil, myerror.ErrKeyNotFound
 		}
 		// 从节点中查找
-		for _, node := range t.nodes {
-			for i := len(node) - 1; i >= 0; i-- {
-				value, err := node[i].Get(key)
+		for level := range t.nodes {
+			nodeSlice := t.nodes[level]
+			// fmt.Printf("level: %d, len(nodeSlice): %d\n", level, len(nodeSlice))
+			for i := len(nodeSlice) - 1; i >= 0; i-- {
+				// if nodeSlice[i] == nil {
+				// 	continue
+				// }
+				value, err := nodeSlice[i].Get(key)
 				if err == nil {
+					if value == nil {
+						return value, myerror.ErrValueNil
+					}
 					return value, nil
-				}
-				if err == myerror.ErrKeyNotFound {
+				} else if err == myerror.ErrKeyNotFound {
 					continue
+				} else {
+					return nil, err
 				}
-				if value != nil {
-					return value, nil
-				}
-				return nil, myerror.ErrKeyNotFound
+
 			}
 		}
 		// 如果所有节点都找不到，返回ErrKeyNotFound
@@ -218,19 +251,41 @@ func (t *LsmTree) doCompact(imm *immutable) error {
 	}
 
 	// 调用底层compact方法将memtable转为SST文件
+	if t.conf.IsDebug {
+		fmt.Println("compact")
+		fmt.Printf("levelSize: %d, seq length: %d\n", t.levelSize, len(t.seq))
+	}
+
+	// Check if t.seq has elements before accessing index 0
+	if len(t.seq) == 0 {
+		// Try to re-initialize the sequence array if it's empty
+		t.seq = make([]*atomic.Uint32, t.levelSize)
+		for i := 0; i < t.levelSize; i++ {
+			t.seq[i] = &atomic.Uint32{}
+		}
+
+		if len(t.seq) == 0 {
+			return fmt.Errorf("failed to initialize sequence array, levelSize: %d", t.levelSize)
+		}
+	}
+
 	seq := t.seq[0].Load()
 	t.seq[0].Add(1)
-	sstFilePath := t.getSSTFilePath(imm, 0, seq)
+	sstFilePath := t.getSSTFilePath(0, seq)
 	if err := t.writeMemTableToSST(imm, sstFilePath); err != nil {
 		return err
 	}
 
-	// 压缩完成后，可以关闭WAL并从immutableIndex中移除该索引
-	if err := imm.wal.Close(); err != nil {
-		return err
-	}
+	// // 压缩完成后，可以关闭WAL并从immutableIndex中移除该索引
+	// if err := imm.wal.Close(); err != nil {
+	// 	return err
+	// }
 
 	// 从immutableIndex中移除该索引
+	if err := t.immutableIndex[index].wal.Delete(); err != nil {
+		return err
+	}
+	t.immutableIndex[index] = nil
 	// 需要加锁保护，此处简化处理
 	t.immutableIndex = append(t.immutableIndex[:index], t.immutableIndex[index+1:]...)
 	// 将SST文件添加到节点中
@@ -248,8 +303,8 @@ func (t *LsmTree) doCompact(imm *immutable) error {
 }
 
 // getSSTFilePath 获取SST文件路径
-func (t *LsmTree) getSSTFilePath(imm *immutable, level int, seq uint32) string {
-	return fmt.Sprintf("%s/sst_%d_%d.db", t.conf.DataDir, level, seq)
+func (t *LsmTree) getSSTFilePath(level int, seq uint32) string {
+	return filepath.Join(t.conf.DataDir, t.conf.SSTDir, fmt.Sprintf("%d_%d.sst", level, seq))
 }
 
 // writeMemTableToSST 将memtable内容写入SST文件

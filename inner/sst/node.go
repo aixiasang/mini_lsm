@@ -54,9 +54,6 @@ func (n *Node) Get(key []byte) ([]byte, error) {
 	// 查看kvlist中是否存在key
 	for _, kv := range n.kvList {
 		if bytes.Equal(kv.Key, key) {
-			if kv.Value == nil {
-				return nil, myerror.ErrValueNil
-			}
 			return kv.Value, nil
 		}
 	}

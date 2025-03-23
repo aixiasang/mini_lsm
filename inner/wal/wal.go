@@ -65,8 +65,9 @@ func (w *Wal) ReadAll(memTable memtable.MemTable) error {
 	if _, err := w.fp.Seek(0, 0); err != nil {
 		return err
 	}
-
-	fmt.Printf("开始从文件ID=%d读取全部记录\n", w.fileId)
+	if w.conf.IsDebug {
+		fmt.Printf("开始从文件ID=%d读取全部记录\n", w.fileId)
+	}
 
 	// 获取文件大小
 	fileInfo, err := w.fp.Stat()
@@ -133,16 +134,21 @@ func (w *Wal) ReadAll(memTable memtable.MemTable) error {
 				offset, crc, computedCrc)
 			// 继续处理，但记录警告
 		}
-
-		fmt.Printf("解析记录: type=%d, key=%s, keyLen=%d, valueLen=%d, offset=%d, len=%d\n",
-			recordType, string(key), keyLength, valueLength, offset, recordLength)
+		if w.conf.IsDebug {
+			fmt.Printf("解析记录: type=%d, key=%s, keyLen=%d, valueLen=%d, offset=%d, len=%d\n",
+				recordType, string(key), keyLength, valueLength, offset, recordLength)
+		}
 
 		// 基于记录类型处理
 		if recordType == RecordTypeDelete {
-			fmt.Printf("处理删除记录: key=%s\n", string(key))
+			if w.conf.IsDebug {
+				fmt.Printf("处理删除记录: key=%s\n", string(key))
+			}
 			_ = memTable.Delete(key)
 		} else {
-			fmt.Printf("处理普通记录: key=%s, value=%s\n", string(key), string(value))
+			if w.conf.IsDebug {
+				fmt.Printf("处理普通记录: key=%s, value=%s\n", string(key), string(value))
+			}
 			// 关键修复: 使用当前记录在文件中的实际位置，而不是旧位置
 			if err := memTable.Put(key, value); err != nil {
 				return fmt.Errorf("更新索引失败: %v", err)
@@ -153,7 +159,9 @@ func (w *Wal) ReadAll(memTable memtable.MemTable) error {
 		offset += recordLength
 	}
 
-	fmt.Printf("文件ID=%d读取完成，处理了 %d 字节\n", w.fileId, offset)
+	if w.conf.IsDebug {
+		fmt.Printf("文件ID=%d读取完成，处理了 %d 字节\n", w.fileId, offset)
+	}
 
 	// 更新WAL实例的offset以反映文件的实际大小
 	w.offset = offset

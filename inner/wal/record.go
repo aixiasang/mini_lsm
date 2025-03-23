@@ -3,10 +3,11 @@ package wal
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
+
+	"github.com/aixiasang/lsm/inner/myerror"
 )
 
 type RecordType uint8
@@ -39,41 +40,41 @@ func newRecord(key, value []byte, recordType RecordType) *Record {
 func (r *Record) Encode() ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
 	if err := buf.WriteByte(byte(r.RecordType)); err != nil {
-		return nil, errors.New("failed to write record type")
+		return nil, myerror.ErrEncodeRecordType
 	}
 	if err := binary.Write(buf, binary.BigEndian, uint32(len(r.Key))); err != nil {
-		return nil, errors.New("failed to write key length")
+		return nil, myerror.ErrEncodeKeyLength
 	}
 	if err := binary.Write(buf, binary.BigEndian, uint32(len(r.Value))); err != nil {
-		return nil, errors.New("failed to write value length")
+		return nil, myerror.ErrEncodeValueLength
 	}
 	if _, err := buf.Write(r.Key); err != nil {
-		return nil, errors.New("failed to write key")
+		return nil, myerror.ErrEncodeKey
 	}
 	if _, err := buf.Write(r.Value); err != nil {
-		return nil, errors.New("failed to write value")
+		return nil, myerror.ErrEncodeValue
 	}
 	crc := crc32.ChecksumIEEE(buf.Bytes())
 	if err := binary.Write(buf, binary.BigEndian, crc); err != nil {
-		return nil, errors.New("failed to write crc")
+		return nil, myerror.ErrEncodeCrc
 	}
 	return buf.Bytes(), nil
 }
 func DecodeRecord(data []byte) (*Record, error) {
 	if len(data) < 9 { // 至少需要 1 字节类型 + 4 字节 key 长度 + 4 字节 value 长度
-		return nil, errors.New("record data too short")
+		return nil, myerror.ErrRecordDataTooShort
 	}
 
 	recordType := RecordType(data[0])
 
 	var keyLength uint32
 	if err := binary.Read(bytes.NewReader(data[1:5]), binary.BigEndian, &keyLength); err != nil {
-		return nil, errors.New("failed to read key length")
+		return nil, myerror.ErrDecodeKeyLength
 	}
 
 	var valueLength uint32
 	if err := binary.Read(bytes.NewReader(data[5:9]), binary.BigEndian, &valueLength); err != nil {
-		return nil, errors.New("failed to read value length")
+		return nil, myerror.ErrDecodeValueLength
 	}
 
 	// 验证长度合理性
@@ -84,7 +85,7 @@ func DecodeRecord(data []byte) (*Record, error) {
 	// 验证数据长度是否足够
 	expectedLength := 9 + keyLength + valueLength + 4 // header + key + value + crc
 	if uint32(len(data)) < expectedLength {
-		return nil, errors.New("record data incomplete")
+		return nil, myerror.ErrRecordDataIncomplete
 	}
 
 	// 读取 key 和 value
@@ -95,13 +96,13 @@ func DecodeRecord(data []byte) (*Record, error) {
 	crcData := data[9+keyLength+valueLength:]
 	var storedCrc uint32
 	if err := binary.Read(bytes.NewReader(crcData), binary.BigEndian, &storedCrc); err != nil {
-		return nil, errors.New("failed to read crc")
+		return nil, myerror.ErrDecodeCrc
 	}
 
 	// 计算 CRC
 	actualCrc := crc32.ChecksumIEEE(data[:9+keyLength+valueLength])
 	if storedCrc != actualCrc {
-		return nil, errors.New("crc mismatch")
+		return nil, myerror.ErrCrcMismatch
 	}
 
 	return &Record{
@@ -122,32 +123,33 @@ func DecodeStream(r io.Reader, callback func(key, value []byte) error) error {
 			return err
 		}
 		rec := &Record{}
+		// todo: 这里需要优化 recordType 的读取
 		rec.RecordType = RecordType(buf[0])
 		var keyLength uint32
 		if err := binary.Read(bytes.NewBuffer(buf[1:5]), binary.BigEndian, &keyLength); err != nil {
-			return errors.New("failed to read key length")
+			return myerror.ErrDecodeKeyLength
 		}
 		var valueLength uint32
 		if err := binary.Read(bytes.NewBuffer(buf[5:9]), binary.BigEndian, &valueLength); err != nil {
-			return errors.New("failed to read value length")
+			return myerror.ErrDecodeValueLength
 		}
 		key := make([]byte, keyLength)
 		if _, err := io.ReadFull(bytes.NewBuffer(buf[9:9+keyLength]), key); err != nil {
-			return errors.New("failed to read key")
+			return myerror.ErrDecodeKey
 		}
 		value := make([]byte, valueLength)
 		if _, err := io.ReadFull(bytes.NewBuffer(buf[9+keyLength:]), value); err != nil {
-			return errors.New("failed to read value")
+			return myerror.ErrDecodeValue
 		}
 		var expectCrc uint32
 		if err := binary.Read(bytes.NewBuffer(buf[9+keyLength+valueLength:]), binary.BigEndian, &expectCrc); err != nil {
-			return errors.New("failed to read crc")
+			return myerror.ErrDecodeCrc
 		}
 		fullData := append(buf[:], key...)
 		fullData = append(fullData, value...)
 		crc := crc32.ChecksumIEEE(fullData)
 		if crc != expectCrc {
-			return errors.New("crc mismatch")
+			return myerror.ErrCrcMismatch
 		}
 		if err := callback(key, value); err != nil {
 			return err

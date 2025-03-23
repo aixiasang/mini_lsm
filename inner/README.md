@@ -23,8 +23,9 @@ type LsmTree struct {
     immutableIndex []*immutable      // 不可变索引
     compactCh      chan *immutable   // 压缩通道，用于异步传递不可变索引进行压缩
     stopCh         chan struct{}     // 停止信号通道
-    nodes          [][]*sst.Node     // 节点
-    seq            []atomic.Uint32   // 序列号
+    nodes          [][]*sst.Node     // 节点 - 每层的节点切片数组
+    seq            []*atomic.Uint32  // 序列号
+    levelSize      int               // 层级大小
 }
 ```
 
@@ -47,7 +48,7 @@ type immutable struct {
 2. **📤 读取操作**
    - 首先在活跃MemTable中查找
    - 然后按照从新到旧的顺序在不可变索引中查找
-   - 最后在SST文件节点中查找
+   - 最后在SST文件节点中按层查找
 
 3. **⚙️ 异步压缩**
    - 不可变索引通过通道传递给压缩工作线程
@@ -79,13 +80,83 @@ func (t *LsmTree) compactWorker()
 func (t *LsmTree) Close() error
 ```
 
-## 📦 压缩机制
+### 📥 加载操作
 
-当内存表达到一定大小时，会触发WAL轮转，将当前内存表标记为不可变，创建新的内存表和WAL继续接收写入。不可变内存表会通过通道传递给压缩工作线程，由工作线程将其转换为SST文件。压缩过程是异步的，不会阻塞主线程的写入操作。
+```go
+func (t *LsmTree) load() error
+func (t *LsmTree) loadSST() error
+func (t *LsmTree) loadWAL() error
+```
 
-### ✨ 压缩特点
+## 📦 当前实现状态
 
-- **🧵 异步处理**：通过channel实现不阻塞主线程
-- **🔄 自动触发**：基于WAL大小自动触发
-- **📚 分层存储**：支持多层SST文件组织
-- **📊 有序合并**：保持数据的有序性，优化范围查询 
+目前的LSM-Tree实现已完成以下基础功能：
+
+- **✅ 基本键值操作**：支持Put、Get、Delete等基本操作
+- **✅ 日志预写（WAL）**：确保数据持久性，防止系统崩溃数据丢失
+- **✅ 内存表管理**：支持可变和不可变内存表，高效处理写入操作
+- **✅ SST文件持久化**：将内存表数据持久化到SST文件
+- **✅ 多级存储**：支持多层级SST文件组织
+- **✅ 异步压缩**：后台异步将不可变内存表压缩到SST文件
+
+### ❌ 尚未实现的功能
+
+- **层次合并（Leveled Compaction）**：目前尚未实现不同层级之间的SST文件合并
+- **范围查询**：尚未实现范围查询功能
+- **迭代器接口**：尚未提供标准的迭代器接口用于数据遍历
+
+## 🔧 配置选项
+
+LSM-Tree支持以下配置选项：
+
+```go
+type Config struct {
+    DataDir             string                                   // 数据目录
+    WalDir              string                                   // WAL目录
+    SSTDir              string                                   // SST目录
+    AutoSync            bool                                     // 是否自动同步
+    BlockSize           int64                                    // 块大小
+    WalSize             uint32                                   // WAL大小
+    MemTableType        MemTableType                             // 内存表类型
+    MemTableDegree      int                                      // 内存表度
+    LevelSize           int                                      // 层级大小
+    FilterConstructor   func(m uint64, k uint) filter.Filter     // 过滤器构造函数
+    MemTableConstructor func(...) memtable.MemTable              // 内存表构造函数
+    IsDebug             bool                                     // 是否调试
+}
+```
+
+## 📚 SST文件结构
+
+SST文件由以下组件组成：
+
+- **数据块**：存储实际的键值对
+- **索引块**：存储数据块的索引信息
+- **元数据块**：存储文件的元数据
+- **过滤器块**：存储布隆过滤器等数据结构，加速查找
+
+### 🔍 SST节点
+
+```go
+type Node struct {
+    conf     *config.Config          // 配置
+    filename string                  // 文件名
+    level    int                     // 层级
+    seq      int32                   // 序列号
+    size     int64                   // 大小
+    minKey   []byte                  // 最小键
+    maxKey   []byte                  // 最大键
+    index    []*Index                // 索引
+    filter   map[int64]filter.Filter // 过滤器
+    reader   *SSTReader              // 读取器
+    kvList   []*KeyValue             // 数据块
+}
+```
+
+## 🚀 未来规划
+
+1. **✨ 实现层次合并**：基于大小和层级触发SST文件之间的合并，优化存储效率
+2. **✨ 添加范围查询支持**：实现高效的范围查询功能
+3. **✨ 提供迭代器接口**：用于高效遍历数据
+4. **✨ 优化读取性能**：通过缓存、索引优化等手段提升读取性能
+5. **✨ 增强并发控制**：优化多线程下的性能表现 

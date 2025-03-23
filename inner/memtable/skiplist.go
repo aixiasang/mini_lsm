@@ -2,9 +2,9 @@ package memtable
 
 import (
 	"bytes"
-	"errors"
 	"sync"
 
+	"github.com/aixiasang/lsm/inner/myerror"
 	"github.com/huandu/skiplist"
 )
 
@@ -33,7 +33,7 @@ func NewSkipListMemTable() *SkipListMemTable {
 // Put 向跳表中插入键值对
 func (sl *SkipListMemTable) Put(key, value []byte) error {
 	if key == nil {
-		return errors.New("key cannot be nil")
+		return myerror.ErrKeyNil
 	}
 
 	// 深拷贝键和值，避免外部修改
@@ -50,7 +50,7 @@ func (sl *SkipListMemTable) Put(key, value []byte) error {
 // Get 从跳表中获取值
 func (sl *SkipListMemTable) Get(key []byte) ([]byte, error) {
 	if key == nil {
-		return nil, errors.New("key cannot be nil")
+		return nil, myerror.ErrKeyNil
 	}
 
 	sl.mutex.RLock()         // 读操作加读锁
@@ -58,7 +58,7 @@ func (sl *SkipListMemTable) Get(key []byte) ([]byte, error) {
 
 	element := sl.list.Get(key)
 	if element == nil {
-		return nil, errors.New("key not found")
+		return nil, myerror.ErrKeyNotFound
 	}
 
 	// 返回值的深拷贝，避免外部修改
@@ -69,14 +69,14 @@ func (sl *SkipListMemTable) Get(key []byte) ([]byte, error) {
 // Delete 从跳表中删除一个键值对
 func (sl *SkipListMemTable) Delete(key []byte) error {
 	if key == nil {
-		return errors.New("key cannot be nil")
+		return myerror.ErrKeyNil
 	}
 
 	sl.mutex.Lock()         // 写操作加锁
 	defer sl.mutex.Unlock() // 确保操作完成后解锁
 
 	if sl.list.Remove(key) == nil {
-		return errors.New("key not found")
+		return myerror.ErrKeyNotFound
 	}
 
 	return nil

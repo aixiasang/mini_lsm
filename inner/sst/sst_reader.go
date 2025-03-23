@@ -3,7 +3,6 @@ package sst
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"io"
 	"os"
 	"sync"
@@ -263,7 +262,7 @@ func (r *SSTReader) loadFilter() error {
 
 		// 检查数据长度是否合理
 		if filterLen == 0 || filterLen > uint32(buf.Len()) {
-			return errors.New("invalid filter length")
+			return myerror.ErrSSTReaderFilter
 		}
 
 		// 读取过滤器数据
@@ -445,6 +444,7 @@ func (r *SSTReader) GetIterator() (*SSTIterator, error) {
 	return it, nil
 }
 
+// todo:后续补充使用
 // SSTIterator SST迭代器
 type SSTIterator struct {
 	reader    *SSTReader

@@ -9,7 +9,7 @@ type MemTable interface {
 	ForEachUnSafe(visitor func(key, value []byte) bool) // 遍历
 }
 
-type MemTableType int
+type MemTableType int8
 
 const (
 	MemTableTypeBTree MemTableType = iota
