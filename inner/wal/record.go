@@ -10,17 +10,19 @@ import (
 	"github.com/aixiasang/lsm/inner/myerror"
 )
 
+// RecordType 记录类型
 type RecordType uint8
 
 const (
-	RecordTypePut RecordType = iota
-	RecordTypeDelete
+	RecordTypePut    RecordType = iota // 写入
+	RecordTypeDelete                   // 删除
 )
 
+// Record 记录
 type Record struct {
-	RecordType RecordType
-	Key        []byte
-	Value      []byte
+	RecordType RecordType // 记录类型
+	Key        []byte     // 键
+	Value      []byte     // 值
 }
 
 func NewRecord(key, value []byte) *Record {

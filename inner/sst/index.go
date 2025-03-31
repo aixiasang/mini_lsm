@@ -3,6 +3,7 @@ package sst
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 )
 
 // Index
@@ -11,6 +12,10 @@ type Index struct {
 	EndKey   []byte //最大的key
 	Offset   int64  //偏移量
 	Length   int64  //长度
+}
+
+func (i *Index) String() string {
+	return fmt.Sprintf("StartKey: %s, EndKey: %s, Offset: %d, Length: %d", i.StartKey, i.EndKey, i.Offset, i.Length)
 }
 
 func (i *Index) Encode() ([]byte, error) {

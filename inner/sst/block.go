@@ -105,13 +105,23 @@ func (b *Block) Length() int64 {
 func (b *Block) FirstKey() []byte {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.firstKey
+	if b.firstKey == nil {
+		return nil
+	}
+	keyCopy := make([]byte, len(b.firstKey))
+	copy(keyCopy, b.firstKey)
+	return keyCopy
 }
 
 func (b *Block) LastKey() []byte {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.lastKey
+	if b.lastKey == nil {
+		return nil
+	}
+	keyCopy := make([]byte, len(b.lastKey))
+	copy(keyCopy, b.lastKey)
+	return keyCopy
 }
 
 func (b *Block) EntriesCnt() int64 {

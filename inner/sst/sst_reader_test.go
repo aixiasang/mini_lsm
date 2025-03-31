@@ -81,7 +81,7 @@ func TestSSTReaderBasic(t *testing.T) {
 
 	// Verify that we can read back the data
 	for k, v := range testData {
-		value, err := reader.Get([]byte(k))
+		value, err := reader.SlowGet([]byte(k))
 		if err != nil {
 			t.Errorf("Failed to get value for key %s: %v", k, err)
 			continue
@@ -93,7 +93,7 @@ func TestSSTReaderBasic(t *testing.T) {
 	}
 
 	// Test a non-existent key
-	_, err = reader.Get([]byte("non_existent_key"))
+	_, err = reader.SlowGet([]byte("non_existent_key"))
 	if err != myerror.ErrKeyNotFound {
 		t.Errorf("Expected ErrKeyNotFound for non-existent key, got: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestSSTReaderBasic(t *testing.T) {
 		key := []byte(string(rune('a' + i)))
 		expectedValue := []byte(string(rune('A' + i)))
 
-		value, err := reader.Get(key)
+		value, err := reader.SlowGet(key)
 		if err != nil {
 			t.Errorf("Failed to get value for key %s: %v", string(key), err)
 			continue

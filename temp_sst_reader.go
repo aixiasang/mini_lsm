@@ -106,85 +106,75 @@ func (r *SSTReader) FileSize() int64 {
 
 // loadDataBlock 加载数据区域
 func (r *SSTReader) loadDataBlock() error {
-	// 1. 先完全读取数据区域
-	dataBytes := make([]byte, r.dataLength)
-	if _, err := r.fp.ReadAt(dataBytes, r.dataOffset); err != nil {
+	// 读取数据区域数据
+	data := make([]byte, r.dataLength)
+	if _, err := r.fp.ReadAt(data, r.dataOffset); err != nil {
+		fmt.Println("loadDataBlock11", err)
 		return err
 	}
-	fmt.Println("index", r.index, len(r.index))
-	// 2. 初始化数据结构
-	r.kvList = make([]*KeyValue, 0)
 	kvLists := make(map[int64][]*KeyValue)
-
-	blockReader := bytes.NewReader(dataBytes)
-
-	// 创建当前块的KV列表
-	indexLength := len(r.index)
-	for i := 0; i < indexLength; i++ {
-		fmt.Println("index", r.index[i])
-	}
-	currIndex := 0
-	currOffset := int64(0)
-	currIndexOffset := r.index[currIndex].Offset
-	currIndexLength := r.index[currIndex].Length
-	fmt.Println("currIndexOffset", currIndexOffset, "currIndexLength", currIndexLength)
-	currKeyVals := make([]*KeyValue, 0)
-	// 解析KV对
-	for blockReader.Len() > 0 {
+	indexLenth := len(r.index)
+	// Removed debug print
+	startIndex := 0
+	startIndexOffset := r.index[startIndex].Offset //
+	startIndexLength := r.index[startIndex].Length //
+	fmt.Println("start", startIndexOffset, startIndexLength)
+	curKeyValues := make([]*KeyValue, 0)
+	// 解析数据区域
+	offset := 0
+	buf := bytes.NewReader(data)
+	for buf.Len() > 0 {
 		// 读取key长度
 		var keyLen uint32
-		if err := binary.Read(blockReader, binary.BigEndian, &keyLen); err != nil {
-			if err == io.EOF {
-				break
-			}
+		if err := binary.Read(buf, binary.BigEndian, &keyLen); err != nil {
 			return err
 		}
 
 		// 读取value长度
 		var valueLen uint32
-		if err := binary.Read(blockReader, binary.BigEndian, &valueLen); err != nil {
+		if err := binary.Read(buf, binary.BigEndian, &valueLen); err != nil {
 			return err
 		}
 
 		// 读取key
 		key := make([]byte, keyLen)
-		if n, err := blockReader.Read(key); err != nil || n != int(keyLen) {
+		if _, err := buf.Read(key); err != nil {
 			return err
 		}
 
 		// 读取value
 		value := make([]byte, valueLen)
-		if n, err := blockReader.Read(value); err != nil || n != int(valueLen) {
+		if _, err := buf.Read(value); err != nil {
 			return err
 		}
 
-		// 创建KV对
 		kv := &KeyValue{
 			Key:   key,
 			Value: value,
 		}
-		currOffset += int64(keyLen) + int64(valueLen) + 4 + 4
-		currKeyVals = append(currKeyVals, kv)
-		if currOffset >= currIndexOffset+currIndexLength {
-			kvLists[currIndexOffset] = currKeyVals
-			fmt.Println("currIndexOffset", currIndexOffset, "currIndexLength", currIndexLength, "currOffset", currOffset)
-			currIndex++
-			if currIndex >= indexLength {
+		offset += 4 + 4 + int(keyLen) + int(valueLen)
+		curKeyValues = append(curKeyValues, kv)
+		fmt.Println("preoffset", offset, startIndexLength)
+		// 如果当前偏移量大于等于当前索引块的长度，则将当前索引块的数据块加入到映射表中
+		if offset >= int(startIndexLength) {
+			kvLists[startIndexOffset] = curKeyValues
+			startIndex++
+			if startIndex >= indexLenth {
 				break
 			}
-			fmt.Println("currIndex", currIndex, r.index[currIndex])
-			currIndexOffset = r.index[currIndex].Offset
-			currIndexLength = r.index[currIndex].Length
-			fmt.Println(">?", "currIndexOffset", currIndexOffset, "currIndexLength", currIndexLength)
-			currKeyVals = make([]*KeyValue, 0)
+			startIndexOffset = r.index[startIndex].Offset
+			startIndexLength = r.index[startIndex].Length
+			curKeyValues = make([]*KeyValue, 0)
 		}
-
+		fmt.Println("curoffset", offset, startIndexLength)
+		r.kvList = append(r.kvList, kv)
 	}
-
-	// 所有检查通过，设置最终的KV列表映射
+	if len(kvLists) != indexLenth {
+		fmt.Println("??", len(kvLists), indexLenth)
+		fmt.Println("kvlits", kvLists)
+		return myerror.ErrInvalidSSTFormat
+	}
 	r.kvLists = kvLists
-	fmt.Println("kvLists", len(r.kvLists), kvLists)
-	fmt.Printf("成功加载了%d个数据块，共有%d个KV对\n", len(r.kvLists), len(r.kvList))
 	return nil
 }
 

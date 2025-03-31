@@ -193,11 +193,7 @@ func (t *LsmTree) Get(key []byte) ([]byte, error) {
 		// 从节点中查找
 		for level := range t.nodes {
 			nodeSlice := t.nodes[level]
-			// fmt.Printf("level: %d, len(nodeSlice): %d\n", level, len(nodeSlice))
 			for i := len(nodeSlice) - 1; i >= 0; i-- {
-				// if nodeSlice[i] == nil {
-				// 	continue
-				// }
 				value, err := nodeSlice[i].Get(key)
 				if err == nil {
 					if value == nil {
